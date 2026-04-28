@@ -1532,7 +1532,7 @@ menu "Languages"
 		bool "Enable Lua support in Nautilus"
 		default n
         depends on ALLOW_UNINTEGRATED
-		help 
+		help
 		  Initial port of he Lua 5.2.4 runtime to Nautilus
 
 	config LUA_TEST
@@ -1541,6 +1541,14 @@ menu "Languages"
 		depends on LOAD_LUA
 		help
 		  Nautilus functionas are made available to Lua externally
+
+	config WASM_RT
+		bool "Enable Wasm3 WebAssembly interpreter"
+		default n
+		help
+		  Embeds the Wasm3 interpreter (pure C, ~64KB) as a kernel runtime.
+		  Provides a 'wasm' shell command for loading and executing .wasm modules.
+		  WASI fd_write is redirected to printk; proc_exit terminates the module.
 
 endmenu
 
