@@ -15,6 +15,18 @@
 #include "m3_env.h"
 #include "extra/fib32.wasm.h"
 
+/*
+ * Explicit kernel symbol declarations.  wasm_nautilus.h provides these via
+ * -include, but the kernel build's warning flags can cause the compiler to
+ * treat them as implicit (returning int) if the force-include is shadowed.
+ * Repeating them here after wasm3.h (which defines size_t via stdlib.h)
+ * guarantees correct 64-bit pointer return types throughout this file.
+ */
+extern void *kmem_malloc(size_t size);
+extern void *kmem_mallocz(size_t size);
+extern void  kmem_free(void *addr);
+extern int   printk(const char *fmt, ...);
+
 /* -----------------------------------------------------------------------
  * PAL implementations declared in wasm_nautilus.h
  * ----------------------------------------------------------------------- */
@@ -179,6 +191,25 @@ struct shell_cmd_impl {
     = &cmd
 
 /* -----------------------------------------------------------------------
+ * Filesystem forward declarations
+ *
+ * Same rationale as shell.h above: <nautilus/fs.h> includes naut_types.h
+ * which redefines POSIX types and conflicts with wasm3's headers.
+ * Forward-declare only the handful of symbols we need here.
+ * ----------------------------------------------------------------------- */
+struct nk_fs_open_file_state;
+typedef struct nk_fs_open_file_state *nk_fs_fd_t;
+#define FS_BAD_FD     ((nk_fs_fd_t)-1UL)
+#define FS_FD_ERR(fd) ((fd) == FS_BAD_FD)
+
+struct nk_fs_stat { uint64_t st_size; };
+
+extern nk_fs_fd_t nk_fs_open(char *path, int flags, int mode);
+extern int        nk_fs_fstat(nk_fs_fd_t fd, struct nk_fs_stat *st);
+extern ssize_t    nk_fs_read(nk_fs_fd_t fd, void *buf, size_t len);
+extern int        nk_fs_close(nk_fs_fd_t fd);
+
+/* -----------------------------------------------------------------------
  * Minimal WASI stubs
  * ----------------------------------------------------------------------- */
 
@@ -223,6 +254,104 @@ m3ApiRawFunction(naut_wasi_proc_exit)
     m3ApiTrap(m3Err_trapExit);
 }
 
+/*
+ * fd_fdstat_get(fd, stat_ptr) -> errno
+ *
+ * wasi_fdstat layout (24 bytes):
+ *   u8  fs_filetype       (offset  0)  2 = character device
+ *   u8  pad               (offset  1)
+ *   u16 fs_flags          (offset  2)
+ *   u8  pad[4]            (offset  4)
+ *   u64 fs_rights_base    (offset  8)  all rights granted
+ *   u64 fs_rights_inherit (offset 16)
+ *
+ * printf checks fs_rights_base & FD_WRITE before calling fd_write.
+ * Grant all rights so every fd appears writable.
+ */
+m3ApiRawFunction(naut_wasi_fd_fdstat_get)
+{
+    m3ApiReturnType  (uint32_t)
+    m3ApiGetArg      (uint32_t, fd)
+    m3ApiGetArgMem   (uint8_t *, stat)
+
+    (void)fd;
+    m3ApiCheckMem(stat, 24);
+
+    for (int i = 0; i < 24; i++) stat[i] = 0;
+    stat[0] = 2;                        /* WASI_FILETYPE_CHARACTER_DEVICE */
+    uint64_t all_rights = ~(uint64_t)0;
+    __builtin_memcpy(stat + 8,  &all_rights, 8);
+    __builtin_memcpy(stat + 16, &all_rights, 8);
+
+    m3ApiReturn(0);
+}
+
+/*
+ * environ_sizes_get(count_ptr, buf_size_ptr) -> errno
+ * Report an empty environment so libc startup succeeds.
+ */
+m3ApiRawFunction(naut_wasi_environ_sizes_get)
+{
+    m3ApiReturnType  (uint32_t)
+    m3ApiGetArgMem   (uint32_t *, count)
+    m3ApiGetArgMem   (uint32_t *, buf_size)
+
+    m3ApiCheckMem(count,    4);
+    m3ApiCheckMem(buf_size, 4);
+    m3ApiWriteMem32(count,    0);
+    m3ApiWriteMem32(buf_size, 0);
+    m3ApiReturn(0);
+}
+
+/* environ_get(environ_ptr, buf_ptr) -> errno */
+m3ApiRawFunction(naut_wasi_environ_get)
+{
+    m3ApiReturnType  (uint32_t)
+    m3ApiGetArg      (uint32_t, environ_ptr)
+    m3ApiGetArg      (uint32_t, buf_ptr)
+
+    (void)environ_ptr; (void)buf_ptr;
+    m3ApiReturn(0);
+}
+
+/*
+ * args_sizes_get(argc_ptr, buf_size_ptr) -> errno
+ * Expose argv = ["wasm"] so main(argc, argv) gets argc=1.
+ */
+m3ApiRawFunction(naut_wasi_args_sizes_get)
+{
+    m3ApiReturnType  (uint32_t)
+    m3ApiGetArgMem   (uint32_t *, argc)
+    m3ApiGetArgMem   (uint32_t *, buf_size)
+
+    m3ApiCheckMem(argc,     4);
+    m3ApiCheckMem(buf_size, 4);
+    m3ApiWriteMem32(argc,     1);   /* one argument */
+    m3ApiWriteMem32(buf_size, 5);   /* "wasm\0" */
+    m3ApiReturn(0);
+}
+
+/*
+ * args_get(argv_ptr, buf_ptr) -> errno
+ * Write argv[0] = "wasm" into the provided buffers.
+ */
+m3ApiRawFunction(naut_wasi_args_get)
+{
+    m3ApiReturnType  (uint32_t)
+    m3ApiGetArgMem   (uint32_t *, argv)
+    m3ApiGetArgMem   (uint8_t *,  buf)
+
+    m3ApiCheckMem(argv, 4);
+    m3ApiCheckMem(buf,  5);
+
+    /* argv[0] points to buf */
+    uint32_t buf_off = (uint32_t)m3ApiPtrToOffset(buf);
+    m3ApiWriteMem32(argv, buf_off);
+
+    buf[0] = 'w'; buf[1] = 'a'; buf[2] = 's'; buf[3] = 'm'; buf[4] = '\0';
+    m3ApiReturn(0);
+}
+
 static M3Result link_nautilus_wasi(IM3Module module)
 {
     M3Result res;
@@ -231,49 +360,94 @@ static M3Result link_nautilus_wasi(IM3Module module)
     res = m3_LinkRawFunction(module, mod, name, sig, fn); \
     if (res && res != m3Err_functionLookupFailed) return res;
 
-    LINK("wasi_snapshot_preview1", "fd_write",  "i(iiii)", &naut_wasi_fd_write)
-    LINK("wasi_unstable",          "fd_write",  "i(iiii)", &naut_wasi_fd_write)
-    LINK("wasi_snapshot_preview1", "proc_exit", "v(i)",    &naut_wasi_proc_exit)
-    LINK("wasi_unstable",          "proc_exit", "v(i)",    &naut_wasi_proc_exit)
+    LINK("wasi_snapshot_preview1", "fd_write",           "i(iiii)", &naut_wasi_fd_write)
+    LINK("wasi_unstable",          "fd_write",           "i(iiii)", &naut_wasi_fd_write)
+    LINK("wasi_snapshot_preview1", "proc_exit",          "v(i)",    &naut_wasi_proc_exit)
+    LINK("wasi_unstable",          "proc_exit",          "v(i)",    &naut_wasi_proc_exit)
+    LINK("wasi_snapshot_preview1", "fd_fdstat_get",      "i(ii)",   &naut_wasi_fd_fdstat_get)
+    LINK("wasi_unstable",          "fd_fdstat_get",      "i(ii)",   &naut_wasi_fd_fdstat_get)
+    LINK("wasi_snapshot_preview1", "environ_sizes_get",  "i(ii)",   &naut_wasi_environ_sizes_get)
+    LINK("wasi_unstable",          "environ_sizes_get",  "i(ii)",   &naut_wasi_environ_sizes_get)
+    LINK("wasi_snapshot_preview1", "environ_get",        "i(ii)",   &naut_wasi_environ_get)
+    LINK("wasi_unstable",          "environ_get",        "i(ii)",   &naut_wasi_environ_get)
+    LINK("wasi_snapshot_preview1", "args_sizes_get",     "i(ii)",   &naut_wasi_args_sizes_get)
+    LINK("wasi_unstable",          "args_sizes_get",     "i(ii)",   &naut_wasi_args_sizes_get)
+    LINK("wasi_snapshot_preview1", "args_get",           "i(ii)",   &naut_wasi_args_get)
+    LINK("wasi_unstable",          "args_get",           "i(ii)",   &naut_wasi_args_get)
 
 #undef LINK
     return m3Err_none;
 }
 
 /* -----------------------------------------------------------------------
- * Core runner
+ * Shared setup/teardown helpers
  * ----------------------------------------------------------------------- */
 
-static int run_wasm(const uint8_t *wasm_bytes, uint32_t wasm_len,
-                    const char *func_name, uint32_t arg)
+/*
+ * Parse, load, and WASI-link a module into a freshly created runtime.
+ * On success, *env_out and *runtime_out are live and must be freed by the
+ * caller via wasm_teardown().  On failure both are freed internally and
+ * the error string is returned.
+ */
+static M3Result wasm_setup(const uint8_t *bytes, uint32_t len,
+                            IM3Environment *env_out, IM3Runtime *runtime_out)
 {
-    M3Result res;
+    *env_out     = NULL;
+    *runtime_out = NULL;
 
     IM3Environment env = m3_NewEnvironment();
-    if (!env) { printk("wasm: failed to create environment\n"); return -1; }
+    if (!env) { printk("wasm: failed to create environment\n"); return "env alloc"; }
 
     IM3Runtime runtime = m3_NewRuntime(env, WASM_STACK_SIZE, NULL);
     if (!runtime) {
         printk("wasm: failed to create runtime\n");
         m3_FreeEnvironment(env);
-        return -1;
+        return "runtime alloc";
     }
 
     IM3Module module;
-    res = m3_ParseModule(env, &module, wasm_bytes, wasm_len);
-    if (res) { printk("wasm: parse error: %s\n", res); goto cleanup; }
+    M3Result res = m3_ParseModule(env, &module, bytes, len);
+    if (res) { printk("wasm: parse error: %s\n", res); goto fail; }
 
     res = m3_LoadModule(runtime, module);
-    if (res) { printk("wasm: load error: %s\n", res); goto cleanup; }
+    if (res) { printk("wasm: load error: %s\n", res); goto fail; }
 
     res = link_nautilus_wasi(module);
-    if (res) { printk("wasm: wasi link error: %s\n", res); goto cleanup; }
+    if (res) { printk("wasm: wasi link error: %s\n", res); goto fail; }
+
+    *env_out     = env;
+    *runtime_out = runtime;
+    return m3Err_none;
+
+fail:
+    m3_FreeRuntime(runtime);
+    m3_FreeEnvironment(env);
+    return res;
+}
+
+static void wasm_teardown(IM3Environment env, IM3Runtime runtime)
+{
+    m3_FreeRuntime(runtime);
+    m3_FreeEnvironment(env);
+}
+
+/* -----------------------------------------------------------------------
+ * Core runner — named function with one uint32 argument, prints result.
+ * ----------------------------------------------------------------------- */
+
+static int run_wasm(const uint8_t *wasm_bytes, uint32_t wasm_len,
+                    const char *func_name, uint32_t arg)
+{
+    IM3Environment env;
+    IM3Runtime runtime;
+    M3Result res = wasm_setup(wasm_bytes, wasm_len, &env, &runtime);
+    if (res) return -1;
 
     IM3Function func;
     res = m3_FindFunction(&func, runtime, func_name);
     if (res) {
         printk("wasm: function '%s' not found: %s\n", func_name, res);
-        goto cleanup;
+        goto done;
     }
 
     char arg_str[32];
@@ -295,14 +469,81 @@ static int run_wasm(const uint8_t *wasm_bytes, uint32_t wasm_len,
                (unsigned long long)ret);
     }
 
-cleanup:
-    m3_FreeRuntime(runtime);
-    m3_FreeEnvironment(env);
+done:
+    wasm_teardown(env, runtime);
     return res ? -1 : 0;
 }
 
 /* -----------------------------------------------------------------------
- * Shell command: "wasm fib <n>"
+ * File-based runner: load a .wasm binary from the filesystem and call
+ * its entry point (_start for WASI programs, main as fallback).
+ * ----------------------------------------------------------------------- */
+
+static int run_wasm_file(const char *path)
+{
+    struct nk_fs_stat st;
+    printk("wasm: opening '%s'\n", path);
+    nk_fs_fd_t fd = nk_fs_open((char *)path, 1 /* O_RDONLY */, 0);
+    if (FS_FD_ERR(fd)) {
+        printk("wasm: cannot open '%s'\n", path);
+        return -1;
+    }
+
+    if (nk_fs_fstat(fd, &st) < 0 || st.st_size == 0) {
+        printk("wasm: cannot stat '%s'\n", path);
+        nk_fs_close(fd);
+        return -1;
+    }
+
+    uint8_t *buf = kmem_malloc((size_t)st.st_size);
+    if (!buf) {
+        printk("wasm: out of memory allocating %llu bytes\n",
+               (unsigned long long)st.st_size);
+        nk_fs_close(fd);
+        return -1;
+    }
+
+    ssize_t n = nk_fs_read(fd, buf, (size_t)st.st_size);
+    nk_fs_close(fd);
+    if (n != (ssize_t)st.st_size) {
+        printk("wasm: read error on '%s' (got %ld of %llu bytes)\n",
+               path, (long)n, (unsigned long long)st.st_size);
+        kmem_free(buf);
+        return -1;
+    }
+
+    IM3Environment env;
+    IM3Runtime runtime;
+    M3Result res = wasm_setup(buf, (uint32_t)n, &env, &runtime);
+    if (res) { kmem_free(buf); return -1; }
+
+    /* Try standard WASI entry point first, then fall back to main. */
+    IM3Function func;
+    res = m3_FindFunction(&func, runtime, "_start");
+    if (res) res = m3_FindFunction(&func, runtime, "main");
+    if (res) {
+        printk("wasm: no '_start' or 'main' export found in '%s'\n", path);
+        goto done;
+    }
+
+    res = m3_CallArgv(func, 0, NULL);
+    if (res == m3Err_trapExit)
+        res = m3Err_none;
+
+    if (res) {
+        M3ErrorInfo info;
+        m3_GetErrorInfo(runtime, &info);
+        printk("wasm: runtime error: %s (%s)\n", res, info.message);
+    }
+
+done:
+    wasm_teardown(env, runtime);
+    kmem_free(buf);
+    return res ? -1 : 0;
+}
+
+/* -----------------------------------------------------------------------
+ * Shell command: "wasm fib <n>" / "wasm <path>"
  * ----------------------------------------------------------------------- */
 
 /* strcmp needs no libc — provide a minimal version to avoid pulling in string.h */
@@ -314,31 +555,42 @@ static int wasm_strcmp(const char *a, const char *b)
 
 static int handle_wasm_cmd(char *buf, void *priv)
 {
-    char subcmd[32] = {0};
-    unsigned int arg = 10;
-
-    /* Skip leading command token ("wasm"), then parse subcmd and optional n.
-     * Avoids sscanf which resolves to __isoc99_sscanf (libc-only symbol). */
+    /* Skip the leading "wasm" token. */
     const char *p = buf;
-    while (*p && *p != ' ') p++;   /* skip "wasm" */
-    while (*p == ' ') p++;          /* skip spaces */
+    while (*p && *p != ' ') p++;
+    while (*p == ' ') p++;
 
-    /* copy subcmd */
+    /* p now points at the first argument (or '\0' if none). */
+    const char *arg_start = p;
+
+    /* Peek at first token to distinguish "fib" from a filesystem path. */
+    char subcmd[8] = {0};
     int i = 0;
-    while (*p && *p != ' ' && i < 31) subcmd[i++] = *p++;
+    while (*p && *p != ' ' && i < 7) subcmd[i++] = *p++;
     subcmd[i] = '\0';
 
-    while (*p == ' ') p++;          /* skip spaces */
-    if (*p >= '0' && *p <= '9') {
-        arg = 0;
-        while (*p >= '0' && *p <= '9') arg = arg * 10 + (*p++ - '0');
-    }
-
     if (subcmd[0] == '\0' || wasm_strcmp(subcmd, "fib") == 0) {
+        /* "wasm [fib [n]]" — run embedded fibonacci module. */
+        unsigned int arg = 10;
+        while (*p == ' ') p++;
+        if (*p >= '0' && *p <= '9') {
+            arg = 0;
+            while (*p >= '0' && *p <= '9') arg = arg * 10 + (*p++ - '0');
+        }
         printk("wasm: running fib(%u) from embedded fib32.wasm\n", arg);
         run_wasm(fib32_wasm, fib32_wasm_len, "fib", arg);
     } else {
-        printk("wasm: usage: wasm fib <n>\n");
+        /* Any other token is treated as a filesystem path.
+         * Copy arg_start into a local buffer, stopping at whitespace, so that
+         * the full path (potentially longer than subcmd's 8-char peek) is used
+         * and any trailing spaces/newlines from the raw command line are stripped. */
+        char path[256] = {0};
+        const char *s = arg_start;
+        int j = 0;
+        while (*s && *s != ' ' && *s != '\t' && *s != '\n' && j < 255)
+            path[j++] = *s++;
+        path[j] = '\0';
+        run_wasm_file(path);
     }
 
     return 0;
@@ -346,7 +598,7 @@ static int handle_wasm_cmd(char *buf, void *priv)
 
 static struct shell_cmd_impl wasm_impl = {
     .cmd      = "wasm",
-    .help_str = "wasm fib <n>  -- run embedded fib32 WASM module",
+    .help_str = "wasm <path>  -- run WASM file; wasm fib <n>  -- run embedded fib32",
     .handler  = handle_wasm_cmd,
 };
 nk_register_shell_cmd(wasm_impl);

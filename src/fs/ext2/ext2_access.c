@@ -153,7 +153,7 @@ static int read_write_block_group(struct ext2_state* fs, uint32_t block_group_nu
     DEBUG("%s block group fs %s bgn=%u\n", rw[write], fs->fs->name, block_group_num);
 
     block_size = get_block_size(fs);
-    block_num = FLOOR_DIV(SUPERBLOCK_OFFSET+SUPERBLOCK_SIZE,block_size);
+    block_num = CEIL_DIV(SUPERBLOCK_OFFSET+SUPERBLOCK_SIZE,block_size);
     desc_per_block = block_size/sizeof(struct ext2_group_desc);
     block_num += block_group_num/desc_per_block;
     offset = block_group_num%desc_per_block;
@@ -193,43 +193,43 @@ static int read_write_inode(struct ext2_state *fs, uint32_t inode_num, struct ex
     uint32_t inode_block;
     uint64_t inode_offset;
     uint32_t block_size = get_block_size(fs);
-    uint64_t inodes_per_block = FLOOR_DIV(block_size,sizeof(struct ext2_inode));
+    uint32_t inode_size = EXT2_INODE_SIZE(&fs->super);
+    uint64_t inodes_per_block = FLOOR_DIV(block_size, inode_size);
     uint8_t buf[block_size];
-    struct ext2_inode* inode_table = (struct ext2_inode *)buf;
 
     write &= 0x1;
 
-    if (read_block_group(fs,inode_num/inodes_per_group(&fs->super),&bg)) { 
+    if (read_block_group(fs,inode_num/inodes_per_group(&fs->super),&bg)) {
 	ERROR("Cannot read block group\n");
 	return -1;
     }
 
-    DEBUG("block group:  bbitmap=%u ibitmap=%u, itable=%u\n", 
+    DEBUG("block group:  bbitmap=%u ibitmap=%u, itable=%u\n",
 	  bg.bg_block_bitmap, bg.bg_inode_bitmap, bg.bg_inode_table);
 
     //get index into inode table
     inode_block  = bg.bg_inode_table + FLOOR_DIV(inode_num - 1, inodes_per_block);
     inode_offset = (inode_num - 1) % inodes_per_block;
 
-    DEBUG("%sing inode %u (block %u, offset %u) inode_size=%u  on fs %s\n", 
-	  rw[write], inode_num, inode_block, inode_offset, sizeof(struct ext2_inode), fs->fs->name);
+    DEBUG("%sing inode %u (block %u, offset %u) inode_size=%u  on fs %s\n",
+	  rw[write], inode_num, inode_block, inode_offset, inode_size, fs->fs->name);
 
-    //gets pointer to block where inodes are located 
-    if (read_block(fs,inode_block,buf)) { 
+    //gets pointer to block where inodes are located
+    if (read_block(fs,inode_block,buf)) {
 	ERROR("Cannot read inode block\n");
 	return -1;
     }
 
-    if (write) { 
-	inode_table[inode_offset] = *srcdest;
-	if (write_block(fs,inode_block,buf)) { 
+    if (write) {
+	memcpy(&buf[inode_offset * inode_size], srcdest, sizeof(struct ext2_inode));
+	if (write_block(fs,inode_block,buf)) {
 	    ERROR("Cannot write inode block\n");
 	    return -1;
 	} else {
 	    return 0;
 	}
     } else {
-	*srcdest = inode_table[inode_offset];
+	memcpy(srcdest, &buf[inode_offset * inode_size], sizeof(struct ext2_inode));
 	return 0;
     }
 }

@@ -71,8 +71,14 @@ static int read_write_bootrecord(struct fat32_state *fs, int write)
 	rc = nk_block_dev_read(fs->dev,0,1,&fs->bootrecord,NK_DEV_REQ_BLOCKING,0,0);
     }
     
-    if (rc) { 
+    if (rc) {
 	ERROR("Failed to %s boot record due to device error\n",rw[write]);
+	return -1;
+    }
+
+    if (!write && fs->bootrecord.partition_signature != 0xAA55) {
+	ERROR("Not a FAT32 volume (boot signature 0x%04x != 0xAA55)\n",
+	      fs->bootrecord.partition_signature);
 	return -1;
     }
 
