@@ -61,4 +61,18 @@ extern void  naut_abort_fn(void) __attribute__((noreturn));
  * expands safely into a re-declaration of printk. */
 #define fprintf(f, ...) printk(__VA_ARGS__)
 
+/* -----------------------------------------------------------------------
+ * Float support — m3_math_utils.h uses isnan/signbit/NAN from <math.h>
+ * which is unavailable in the kernel.  Map to GCC builtins instead.
+ * ----------------------------------------------------------------------- */
+#ifndef isnan
+#  define isnan(x)   __builtin_isnan(x)
+#endif
+#ifndef signbit
+#  define signbit(x) __builtin_signbit(x)
+#endif
+#ifndef NAN
+#  define NAN        __builtin_nanf("")
+#endif
+
 #endif /* WASM_NAUTILUS_H */

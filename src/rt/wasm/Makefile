@@ -10,9 +10,7 @@ ccflags-y += -Wno-unused-variable -Wno-unused-function -Wno-implicit-function-de
 # link time — unavailable in the kernel.  Strip _FORTIFY_SOURCE entirely.
 ccflags-y += -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0
 
-# Wasm3 float opcodes pull in libm (copysign, sqrtf, rint, trunc, etc.).
-# Disable floating-point support; integer Wasm (fib32) does not need it.
-ccflags-y += -Dd_m3HasFloat=0
+# Float opcodes enabled; all required libm symbols are stubbed in wasm_nautilus.c.
 
 # Core Wasm3 interpreter (upstream, unmodified)
 obj-y += \

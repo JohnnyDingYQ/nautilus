@@ -446,12 +446,13 @@ static int alloc_free_inode(struct ext2_state *fs, uint32_t *num, int free)
     uint32_t bg_start, bg_end, bgi;
     uint32_t block_size=get_block_size(fs);
     uint8_t buf[block_size];
-    struct ext2_group_desc bg;
+    struct ext2_group_desc bg = {0};
     
     free &= 0x1;
 
-    if (free) { 
-	bg_start = bg_end = (*num-1)/inodes_per_group(&fs->super);
+    if (free) {
+	bg_start = (*num-1)/inodes_per_group(&fs->super);
+	bg_end = bg_start + 1;
     } else {
 	bg_start = 0;
 	bg_end = num_block_groups(&fs->super);
@@ -519,12 +520,13 @@ static int alloc_free_block(struct ext2_state *fs, uint32_t *num, int free)
     uint32_t bg_start, bg_end, bgi;
     uint32_t block_size=get_block_size(fs);
     uint8_t buf[block_size];
-    struct ext2_group_desc bg;
+    struct ext2_group_desc bg = {0};
     
     free &= 0x1;
 
-    if (free) { 
-	bg_start = bg_end = *num/blocks_per_group(&fs->super);
+    if (free) {
+	bg_start = *num/blocks_per_group(&fs->super);
+	bg_end = bg_start + 1;
     } else {
 	bg_start = 0;
 	bg_end = num_block_groups(&fs->super);
