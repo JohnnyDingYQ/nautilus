@@ -83,30 +83,25 @@ unsigned long long strtoull(const char *s, char **endptr, int base)
 }
 
 /* -----------------------------------------------------------------------
- * Math stubs — satisfy float opcode link-time references.
- * GCC builtins lower to inline SSE2 instructions; no libm needed.
- * fib32 is integer-only so these are never called at runtime.
+ * Math stubs — GCC builtins / inline SSE2; no libm needed.
  * __attribute__((weak)) lets a kernel-provided strong symbol win if present.
  * ----------------------------------------------------------------------- */
-__attribute__((weak)) double copysign(double x, double y)  { return __builtin_copysign(x, y); }
+
+/* --- float variants --- */
 __attribute__((weak)) float  copysignf(float x, float y)   { return __builtin_copysignf(x, y); }
 __attribute__((weak)) float  fabsf(float x)                { return __builtin_fabsf(x); }
-
-__attribute__((weak)) float sqrtf(float x)
+__attribute__((weak)) float  sqrtf(float x)
 {
     float r;
     __asm__ volatile ("sqrtss %1, %0" : "=x"(r) : "x"(x));
     return r;
 }
-
-__attribute__((weak)) double trunc(double x) { return (double)(long long)x; }
 __attribute__((weak)) float  truncf(float x) { return (float)(long long)(double)x; }
-__attribute__((weak)) double rint(double x)
+__attribute__((weak)) float  rintf(float x)
 {
-    long long i = (long long)(x + (x >= 0.0 ? 0.5 : -0.5));
-    return (double)i;
+    long long i = (long long)((double)x + ((double)x >= 0.0 ? 0.5 : -0.5));
+    return (float)i;
 }
-__attribute__((weak)) float  rintf(float x)  { return (float)rint((double)x); }
 __attribute__((weak)) float  floorf(float x)
 {
     long long i = (long long)(double)x;
@@ -116,6 +111,32 @@ __attribute__((weak)) float  ceilf(float x)
 {
     long long i = (long long)(double)x;
     return (float)((double)x > (double)i ? (double)(i + 1) : (double)i);
+}
+
+/* --- double variants --- */
+__attribute__((weak)) double copysign(double x, double y)  { return __builtin_copysign(x, y); }
+__attribute__((weak)) double fabs(double x)                { return __builtin_fabs(x); }
+__attribute__((weak)) double sqrt(double x)
+{
+    double r;
+    __asm__ volatile ("sqrtsd %1, %0" : "=x"(r) : "x"(x));
+    return r;
+}
+__attribute__((weak)) double trunc(double x) { return (double)(long long)x; }
+__attribute__((weak)) double rint(double x)
+{
+    long long i = (long long)(x + (x >= 0.0 ? 0.5 : -0.5));
+    return (double)i;
+}
+__attribute__((weak)) double floor(double x)
+{
+    long long i = (long long)x;
+    return (double)x < (double)i ? (double)(i - 1) : (double)i;
+}
+__attribute__((weak)) double ceil(double x)
+{
+    long long i = (long long)x;
+    return (double)x > (double)i ? (double)(i + 1) : (double)i;
 }
 
 /* -----------------------------------------------------------------------
