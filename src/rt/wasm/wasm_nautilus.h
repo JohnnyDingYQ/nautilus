@@ -62,6 +62,24 @@ extern void  naut_abort_fn(void) __attribute__((noreturn));
 #define fprintf(f, ...) printk(__VA_ARGS__)
 
 /* -----------------------------------------------------------------------
+ * sqrt/sqrtf — libccompat.c provides strong sqrt/sqrtf stubs that return
+ * their input unchanged (kernel placeholder).  Redirect to our own SSE2
+ * implementations so wasm3's f32.sqrt / f64.sqrt opcodes compute real roots.
+ * Object-like macros: the stdlib.h declaration "extern double sqrt(double)"
+ * becomes "extern double naut_sqrt_fn(double)" — a valid redeclaration.
+ * ----------------------------------------------------------------------- */
+extern double naut_sqrt_fn(double x);
+extern float  naut_sqrtf_fn(float x);
+extern double naut_fabs_fn(double x);
+extern double naut_ceil_fn(double x);
+extern double naut_floor_fn(double x);
+#define sqrt  naut_sqrt_fn
+#define sqrtf naut_sqrtf_fn
+#define fabs  naut_fabs_fn
+#define ceil  naut_ceil_fn
+#define floor naut_floor_fn
+
+/* -----------------------------------------------------------------------
  * Float support — m3_math_utils.h uses isnan/signbit/NAN from <math.h>
  * which is unavailable in the kernel.  Map to GCC builtins instead.
  * ----------------------------------------------------------------------- */
