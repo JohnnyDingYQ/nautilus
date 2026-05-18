@@ -14,6 +14,9 @@
 #include "wasm3.h"
 #include "m3_env.h"
 #include "extra/fib32.wasm.h"
+#include "extra/fib32_tail.wasm.h"
+#include "extra/fib64.wasm.h"
+#include "extra/sqrt_test.wasm.h"
 
 /*
  * Explicit kernel symbol declarations.  wasm_nautilus.h provides these via
@@ -87,10 +90,11 @@ unsigned long long strtoull(const char *s, char **endptr, int base)
  * __attribute__((weak)) lets a kernel-provided strong symbol win if present.
  * ----------------------------------------------------------------------- */
 
-/* --- float variants --- */
+/* --- float variants (f32) ---
+ * libccompat.c has no f32 math stubs so weak symbols suffice here. */
 __attribute__((weak)) float  copysignf(float x, float y)   { return __builtin_copysignf(x, y); }
 __attribute__((weak)) float  fabsf(float x)                { return __builtin_fabsf(x); }
-__attribute__((weak)) float  sqrtf(float x)
+float naut_sqrtf_fn(float x)
 {
     float r;
     __asm__ volatile ("sqrtss %1, %0" : "=x"(r) : "x"(x));
@@ -113,10 +117,13 @@ __attribute__((weak)) float  ceilf(float x)
     return (float)((double)x > (double)i ? (double)(i + 1) : (double)i);
 }
 
-/* --- double variants --- */
+/* --- double variants (f64) ---
+ * libccompat.c has strong stubs for fabs/ceil/floor/sqrt that return x
+ * unchanged.  Use private symbols (declared in wasm_nautilus.h) so the
+ * macros in that header redirect wasm3's calls here instead. */
 __attribute__((weak)) double copysign(double x, double y)  { return __builtin_copysign(x, y); }
-__attribute__((weak)) double fabs(double x)                { return __builtin_fabs(x); }
-__attribute__((weak)) double sqrt(double x)
+double naut_fabs_fn(double x)  { return __builtin_fabs(x); }
+double naut_sqrt_fn(double x)
 {
     double r;
     __asm__ volatile ("sqrtsd %1, %0" : "=x"(r) : "x"(x));
@@ -128,12 +135,12 @@ __attribute__((weak)) double rint(double x)
     long long i = (long long)(x + (x >= 0.0 ? 0.5 : -0.5));
     return (double)i;
 }
-__attribute__((weak)) double floor(double x)
+double naut_floor_fn(double x)
 {
     long long i = (long long)x;
     return (double)x < (double)i ? (double)(i - 1) : (double)i;
 }
-__attribute__((weak)) double ceil(double x)
+double naut_ceil_fn(double x)
 {
     long long i = (long long)x;
     return (double)x > (double)i ? (double)(i + 1) : (double)i;
@@ -564,7 +571,96 @@ done:
 }
 
 /* -----------------------------------------------------------------------
- * Shell command: "wasm fib <n>" / "wasm <path>"
+ * Test suite: "wasm test"
+ *
+ * func names vary per entry; sqrt_scaled returns floor(sqrt(n)*1e6) as i64
+ * so float results can be compared exactly without epsilon logic.
+ *
+ *   fib32         "fib"          i32 recursive,  arg=24 → 46368
+ *   fib32_tail    "fib"          i32 tail-call,  arg=24 → 46368
+ *   fib64         "fib"          i64 recursive,  arg=24 → 46368
+ *   sqrt(2)       "sqrt_scaled"  f64.sqrt + mul, arg=2  → 1414213
+ *   sqrt(3)       "sqrt_scaled"                  arg=3  → 1732050
+ *   sqrt(5)       "sqrt_scaled"                  arg=5  → 2236067
+ *   sqrt(7)       "sqrt_scaled"                  arg=7  → 2645751
+ * ----------------------------------------------------------------------- */
+
+static const struct {
+    const char    *name;
+    const char    *func;
+    const uint8_t *bytes;
+    uint32_t       len;
+    uint32_t       arg;
+    uint64_t       expected;
+} wasm_tests[] = {
+    { "fib32",      "fib",          fib32_wasm,      sizeof(fib32_wasm),      24, 46368ULL   },
+    { "fib32_tail", "fib",          fib32_tail_wasm, sizeof(fib32_tail_wasm), 24, 46368ULL   },
+    { "fib64",      "fib",          fib64_wasm,      sizeof(fib64_wasm),      24, 46368ULL   },
+    { "sqrt(2)",    "sqrt_scaled",  sqrt_test_wasm,  sizeof(sqrt_test_wasm),   2, 1414213ULL },
+    { "sqrt(3)",    "sqrt_scaled",  sqrt_test_wasm,  sizeof(sqrt_test_wasm),   3, 1732050ULL },
+    { "sqrt(5)",    "sqrt_scaled",  sqrt_test_wasm,  sizeof(sqrt_test_wasm),   5, 2236067ULL },
+    { "sqrt(7)",    "sqrt_scaled",  sqrt_test_wasm,  sizeof(sqrt_test_wasm),   7, 2645751ULL },
+    { NULL, NULL, NULL, 0, 0, 0 }
+};
+
+static int wasm_eval(const uint8_t *bytes, uint32_t len, const char *func_name,
+                     uint32_t arg, uint64_t *result_out)
+{
+    IM3Environment env;
+    IM3Runtime runtime;
+    M3Result res = wasm_setup(bytes, len, &env, &runtime);
+    if (res) return -1;
+
+    IM3Function func;
+    res = m3_FindFunction(&func, runtime, func_name);
+    if (res) { wasm_teardown(env, runtime); return -1; }
+
+    char arg_str[32];
+    snprintf(arg_str, sizeof(arg_str), "%u", arg);
+    const char *args[1] = { arg_str };
+    res = m3_CallArgv(func, 1, args);
+    if (res) { wasm_teardown(env, runtime); return -1; }
+
+    uint64_t ret = 0;
+    m3_GetResultsV(func, &ret);
+    *result_out = ret;
+    wasm_teardown(env, runtime);
+    return 0;
+}
+
+static int handle_wasm_test(void)
+{
+    int passed = 0, total = 0;
+
+    for (int i = 0; wasm_tests[i].name; i++) {
+        total++;
+        uint64_t result = 0;
+        int err = wasm_eval(wasm_tests[i].bytes, wasm_tests[i].len,
+                            wasm_tests[i].func, wasm_tests[i].arg, &result);
+        if (err) {
+            printk("[wasm-test] %-12s FAIL (setup error)\n",
+                   wasm_tests[i].name);
+        } else if (result != wasm_tests[i].expected) {
+            printk("[wasm-test] %-12s FAIL (got %llu, expected %llu)\n",
+                   wasm_tests[i].name,
+                   (unsigned long long)result,
+                   (unsigned long long)wasm_tests[i].expected);
+        } else {
+            printk("[wasm-test] %-12s PASS  %s(%u) = %llu\n",
+                   wasm_tests[i].name,
+                   wasm_tests[i].func,
+                   wasm_tests[i].arg,
+                   (unsigned long long)result);
+            passed++;
+        }
+    }
+
+    printk("[wasm-test] %d/%d passed\n", passed, total);
+    return (passed == total) ? 0 : -1;
+}
+
+/* -----------------------------------------------------------------------
+ * Shell command: "wasm fib <n>" / "wasm test" / "wasm <path>"
  * ----------------------------------------------------------------------- */
 
 /* strcmp needs no libc — provide a minimal version to avoid pulling in string.h */
@@ -590,7 +686,9 @@ static int handle_wasm_cmd(char *buf, void *priv)
     while (*p && *p != ' ' && i < 7) subcmd[i++] = *p++;
     subcmd[i] = '\0';
 
-    if (subcmd[0] == '\0' || wasm_strcmp(subcmd, "fib") == 0) {
+    if (wasm_strcmp(subcmd, "test") == 0) {
+        handle_wasm_test();
+    } else if (subcmd[0] == '\0' || wasm_strcmp(subcmd, "fib") == 0) {
         /* "wasm [fib [n]]" — run embedded fibonacci module. */
         unsigned int arg = 10;
         while (*p == ' ') p++;
@@ -619,7 +717,7 @@ static int handle_wasm_cmd(char *buf, void *priv)
 
 static struct shell_cmd_impl wasm_impl = {
     .cmd      = "wasm",
-    .help_str = "wasm <path>  -- run WASM file; wasm fib <n>  -- run embedded fib32",
+    .help_str = "wasm test  -- run embedded test suite; wasm fib <n>  -- run fib32; wasm <path>  -- run WASM file",
     .handler  = handle_wasm_cmd,
 };
 nk_register_shell_cmd(wasm_impl);
