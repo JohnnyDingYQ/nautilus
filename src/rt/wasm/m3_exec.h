@@ -278,6 +278,27 @@ d_m3Op(TYPE##_##NAME##_s)                           \
 #define d_m3UnaryOp_f(TYPE, NAME, OPERATION)        d_m3UnaryMacro(_fp0, _fp0, TYPE, NAME, M3_UNARY, OPERATION)
 
 #if d_m3HasFloat
+#ifdef __NAUTILUS__
+/*
+ * Kernel build: libccompat.c has strong identity stubs for sqrt/fabs/floor/ceil
+ * that would otherwise win at link time.  Bypass them by naming our SSE/builtin
+ * implementations directly.  Forward-declare here so no kernel header is needed
+ * in this upstream file.  The -D__NAUTILUS__ flag is always present in Nautilus
+ * Kbuild, so this block is a no-op on any other platform.
+ */
+extern float  naut_sqrtf_fn(float);
+extern double naut_sqrt_fn(double);
+extern double naut_fabs_fn(double);
+extern double naut_floor_fn(double);
+extern double naut_ceil_fn(double);
+d_m3UnaryOp_f (f32, Abs,        fabsf);         d_m3UnaryOp_f (f64, Abs,        naut_fabs_fn);
+d_m3UnaryOp_f (f32, Ceil,       ceilf);         d_m3UnaryOp_f (f64, Ceil,       naut_ceil_fn);
+d_m3UnaryOp_f (f32, Floor,      floorf);        d_m3UnaryOp_f (f64, Floor,      naut_floor_fn);
+d_m3UnaryOp_f (f32, Trunc,      truncf);        d_m3UnaryOp_f (f64, Trunc,      trunc);
+d_m3UnaryOp_f (f32, Sqrt,       naut_sqrtf_fn); d_m3UnaryOp_f (f64, Sqrt,       naut_sqrt_fn);
+d_m3UnaryOp_f (f32, Nearest,    rintf);         d_m3UnaryOp_f (f64, Nearest,    rint);
+d_m3UnaryOp_f (f32, Negate,     -);             d_m3UnaryOp_f (f64, Negate,     -);
+#else
 d_m3UnaryOp_f (f32, Abs,        fabsf);         d_m3UnaryOp_f (f64, Abs,        fabs);
 d_m3UnaryOp_f (f32, Ceil,       ceilf);         d_m3UnaryOp_f (f64, Ceil,       ceil);
 d_m3UnaryOp_f (f32, Floor,      floorf);        d_m3UnaryOp_f (f64, Floor,      floor);
@@ -285,6 +306,7 @@ d_m3UnaryOp_f (f32, Trunc,      truncf);        d_m3UnaryOp_f (f64, Trunc,      
 d_m3UnaryOp_f (f32, Sqrt,       sqrtf);         d_m3UnaryOp_f (f64, Sqrt,       sqrt);
 d_m3UnaryOp_f (f32, Nearest,    rintf);         d_m3UnaryOp_f (f64, Nearest,    rint);
 d_m3UnaryOp_f (f32, Negate,     -);             d_m3UnaryOp_f (f64, Negate,     -);
+#endif
 #endif
 
 #define OP_EQZ(x) ((x) == 0)

@@ -17,6 +17,7 @@
 #include "extra/fib32_tail.wasm.h"
 #include "extra/fib64.wasm.h"
 #include "extra/sqrt_test.wasm.h"
+#include "extra/scratch_test.wasm.h"
 
 /*
  * Explicit kernel symbol declarations.  wasm_nautilus.h provides these via
@@ -100,6 +101,7 @@ float naut_sqrtf_fn(float x)
     __asm__ volatile ("sqrtss %1, %0" : "=x"(r) : "x"(x));
     return r;
 }
+
 __attribute__((weak)) float  truncf(float x) { return (float)(long long)(double)x; }
 __attribute__((weak)) float  rintf(float x)
 {
@@ -120,7 +122,9 @@ __attribute__((weak)) float  ceilf(float x)
 /* --- double variants (f64) ---
  * libccompat.c has strong stubs for fabs/ceil/floor/sqrt that return x
  * unchanged.  Use private symbols (declared in wasm_nautilus.h) so the
- * macros in that header redirect wasm3's calls here instead. */
+ * macros in that header redirect wasm3's calls here instead.
+ * m3_math_utils.h re-applies those macros after <math.h>'s internal #undefs
+ * so the tokens in m3_exec.h still expand to these functions at compile time. */
 __attribute__((weak)) double copysign(double x, double y)  { return __builtin_copysign(x, y); }
 double naut_fabs_fn(double x)  { return __builtin_fabs(x); }
 double naut_sqrt_fn(double x)
@@ -145,6 +149,16 @@ double naut_ceil_fn(double x)
     long long i = (long long)x;
     return (double)x > (double)i ? (double)(i + 1) : (double)i;
 }
+
+/*
+ * math.h may "#undef sqrtf" before its own declaration, wiping the macro from
+ * wasm_nautilus.h.  libccompat has no sqrtf stub, so provide a real symbol as
+ * a belt-and-suspenders fallback — same pattern as calloc above.
+ * (sqrt/fabs/floor/ceil are NOT provided here because libccompat already has
+ * strong definitions for those; the macro fix in m3_math_utils.h ensures wasm3
+ * never reaches the symbol level for those names.)
+ */
+float sqrtf(float x) { return naut_sqrtf_fn(x); }
 
 /* -----------------------------------------------------------------------
  * Fortification stubs — Ubuntu 24.04's GCC 13 spec file re-applies
@@ -236,6 +250,51 @@ extern nk_fs_fd_t nk_fs_open(char *path, int flags, int mode);
 extern int        nk_fs_fstat(nk_fs_fd_t fd, struct nk_fs_stat *st);
 extern ssize_t    nk_fs_read(nk_fs_fd_t fd, void *buf, size_t len);
 extern int        nk_fs_close(nk_fs_fd_t fd);
+
+/* -----------------------------------------------------------------------
+ * Scratch buffer — a fixed kernel-side staging area exposed to wasm modules
+ * as "naut".scratch_write / "naut".scratch_read.  Used to test bidirectional
+ * memory passing between wasm linear memory and the host.
+ * ----------------------------------------------------------------------- */
+
+#define WASM_SCRATCH_SIZE 256
+static uint8_t  wasm_scratch[WASM_SCRATCH_SIZE];
+static uint32_t wasm_scratch_len;
+
+/*
+ * scratch_write(ptr: i32, len: i32) -> i32
+ * Copy up to WASM_SCRATCH_SIZE bytes from wasm linear memory into the
+ * kernel scratch buffer.  Returns the number of bytes written.
+ */
+m3ApiRawFunction(naut_scratch_write)
+{
+    m3ApiReturnType (uint32_t)
+    m3ApiGetArgMem  (const uint8_t *, ptr)
+    m3ApiGetArg     (uint32_t, len)
+
+    if (len > WASM_SCRATCH_SIZE) len = WASM_SCRATCH_SIZE;
+    m3ApiCheckMem(ptr, len);
+    __builtin_memcpy(wasm_scratch, ptr, len);
+    wasm_scratch_len = len;
+    m3ApiReturn(len);
+}
+
+/*
+ * scratch_read(ptr: i32, max: i32) -> i32
+ * Copy up to max bytes from the kernel scratch buffer into wasm linear
+ * memory.  Returns the number of bytes copied.
+ */
+m3ApiRawFunction(naut_scratch_read)
+{
+    m3ApiReturnType (uint32_t)
+    m3ApiGetArgMem  (uint8_t *, ptr)
+    m3ApiGetArg     (uint32_t, max)
+
+    uint32_t n = wasm_scratch_len < max ? wasm_scratch_len : max;
+    m3ApiCheckMem(ptr, n);
+    __builtin_memcpy(ptr, wasm_scratch, n);
+    m3ApiReturn(n);
+}
 
 /* -----------------------------------------------------------------------
  * Minimal WASI stubs
@@ -402,6 +461,9 @@ static M3Result link_nautilus_wasi(IM3Module module)
     LINK("wasi_unstable",          "args_sizes_get",     "i(ii)",   &naut_wasi_args_sizes_get)
     LINK("wasi_snapshot_preview1", "args_get",           "i(ii)",   &naut_wasi_args_get)
     LINK("wasi_unstable",          "args_get",           "i(ii)",   &naut_wasi_args_get)
+
+    LINK("naut", "scratch_write", "i(ii)", &naut_scratch_write)
+    LINK("naut", "scratch_read",  "i(ii)", &naut_scratch_read)
 
 #undef LINK
     return m3Err_none;
@@ -583,6 +645,7 @@ done:
  *   sqrt(3)       "sqrt_scaled"                  arg=3  → 1732050
  *   sqrt(5)       "sqrt_scaled"                  arg=5  → 2236067
  *   sqrt(7)       "sqrt_scaled"                  arg=7  → 2645751
+ *   scratch       "scratch_roundtrip" round-trip memory passing → 0
  * ----------------------------------------------------------------------- */
 
 static const struct {
@@ -599,7 +662,8 @@ static const struct {
     { "sqrt(2)",    "sqrt_scaled",  sqrt_test_wasm,  sizeof(sqrt_test_wasm),   2, 1414213ULL },
     { "sqrt(3)",    "sqrt_scaled",  sqrt_test_wasm,  sizeof(sqrt_test_wasm),   3, 1732050ULL },
     { "sqrt(5)",    "sqrt_scaled",  sqrt_test_wasm,  sizeof(sqrt_test_wasm),   5, 2236067ULL },
-    { "sqrt(7)",    "sqrt_scaled",  sqrt_test_wasm,  sizeof(sqrt_test_wasm),   7, 2645751ULL },
+    { "sqrt(7)",    "sqrt_scaled",      sqrt_test_wasm,    sizeof(sqrt_test_wasm),    7, 2645751ULL },
+    { "scratch",   "scratch_roundtrip",scratch_test_wasm, sizeof(scratch_test_wasm), 0, 0ULL       },
     { NULL, NULL, NULL, 0, 0, 0 }
 };
 
