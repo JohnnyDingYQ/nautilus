@@ -25,6 +25,7 @@
 #include "tests/clock_res_test.wasm.h"
 #include "tests/fd_close_test.wasm.h"
 #include "tests/fd_seek_test.wasm.h"
+#include "tests/wasi_integration_test.wasm.h"
 
 /*
  * Explicit kernel symbol declarations.  wasm_nautilus.h provides these via
@@ -829,6 +830,9 @@ done:
  *   sqrt(5)       "sqrt_scaled"                  arg=5  → 2236067
  *   sqrt(7)       "sqrt_scaled"                  arg=7  → 2645751
  *   scratch       "scratch_roundtrip" round-trip memory passing → 0
+ *   wasi_integration  "wasi_integration_test"  exercises all 13 WASI
+ *                     bindings + naut::scratch; specific negative return
+ *                     code identifies exactly which binding failed → 0
  * ----------------------------------------------------------------------- */
 
 static const struct {
@@ -853,7 +857,8 @@ static const struct {
     { "sched_yield","sched_yield_test", sched_yield_test_wasm,sizeof(sched_yield_test_wasm),0, 0ULL },
     { "clock_res",  "clock_res_test",   clock_res_test_wasm,  sizeof(clock_res_test_wasm),  0, 0ULL },
     { "fd_close",   "fd_close_test",    fd_close_test_wasm,   sizeof(fd_close_test_wasm),   0, 0ULL },
-    { "fd_seek",    "fd_seek_test",     fd_seek_test_wasm,    sizeof(fd_seek_test_wasm),    0, 0ULL },
+    { "fd_seek",    "fd_seek_test",         fd_seek_test_wasm,          sizeof(fd_seek_test_wasm),          0, 0ULL },
+    { "wasi_integration", "wasi_integration_test", wasi_integration_test_wasm, sizeof(wasi_integration_test_wasm), 0, 0ULL },
     { NULL, NULL, NULL, 0, 0, 0 }
 };
 
