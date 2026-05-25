@@ -3,7 +3,8 @@
  *
  * Exports clock_res_test(unused: u32) -> i32.
  * Queries the resolution of both REALTIME (0) and MONOTONIC (1) clocks;
- * verifies both calls succeed and both resolutions are non-zero.
+ * verifies both calls succeed and both resolutions equal exactly 1 ns,
+ * matching the documented behaviour of naut_wasi_clock_res_get.
  *
  * Compiled with -nostdlib --no-entry.
  */
@@ -21,11 +22,11 @@ int clock_res_test(unsigned int unused)
     uint64_t res = 0;
 
     if (wasi_clock_res_get(0, &res) != 0) return -1;  /* REALTIME */
-    if (res == 0) return -2;
+    if (res != 1) return -2;                           /* must be exactly 1 ns */
 
     res = 0;
     if (wasi_clock_res_get(1, &res) != 0) return -3;  /* MONOTONIC */
-    if (res == 0) return -4;
+    if (res != 1) return -4;                           /* must be exactly 1 ns */
 
     return 0;
 }

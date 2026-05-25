@@ -5,7 +5,10 @@
  * Calls clock_time_get twice with a busy loop between them and verifies
  * the timestamp is non-zero and strictly increases (monotonic).
  *
- * Uses WASI import directly; compiled with -nostdlib --no-entry.
+ * Loop count is 1 000 000 to give coarse-resolution timers enough time
+ * to advance at least one tick between the two readings.
+ *
+ * Compiled with -nostdlib --no-entry.
  */
 
 #include <stdint.h>
@@ -24,7 +27,7 @@ int clock_test(unsigned int unused)
     if (wasi_clock_time_get(1, 0, &t1) != 0) return -1;  /* MONOTONIC */
     if (t1 == 0) return -2;                               /* must be non-zero */
 
-    for (i = 0; i < 100000; i++) {}                       /* let time advance */
+    for (i = 0; i < 1000000; i++) {}                      /* let time advance */
 
     if (wasi_clock_time_get(1, 0, &t2) != 0) return -3;
     if (t2 <= t1) return -4;                              /* must increase */
