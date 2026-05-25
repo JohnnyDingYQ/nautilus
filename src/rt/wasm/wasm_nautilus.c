@@ -109,7 +109,22 @@ __attribute__((weak)) float  fabsf(float x)                { return __builtin_fa
 float naut_sqrtf_fn(float x)
 {
     float r;
+    /*
+     * Inline asm bypasses libccompat.c's strong sqrtf stub entirely —
+     * the instruction is emitted directly without going through the linker.
+     * x86_64: sqrtss (SSE2).  ARM64: fsqrt single-precision.
+     * Generic fallback uses __builtin_sqrtf; safe on targets where
+     * libccompat does not define a conflicting strong symbol.
+     * NOTE: ARM64 path SHOULD work but is untested — Nautilus ARM64 support
+     * is a work-in-progress.
+     */
+#if defined(__x86_64__) || defined(__i386__)
     __asm__ volatile ("sqrtss %1, %0" : "=x"(r) : "x"(x));
+#elif defined(__aarch64__)
+    __asm__ volatile ("fsqrt %s0, %s1" : "=w"(r) : "w"(x));
+#else
+    r = __builtin_sqrtf(x);
+#endif
     return r;
 }
 
@@ -141,7 +156,19 @@ double naut_fabs_fn(double x)  { return __builtin_fabs(x); }
 double naut_sqrt_fn(double x)
 {
     double r;
+    /*
+     * Same bypass strategy as naut_sqrtf_fn above.
+     * x86_64: sqrtsd (SSE2).  ARM64: fsqrt double-precision.
+     * NOTE: ARM64 path SHOULD work but is untested — Nautilus ARM64 support
+     * is a work-in-progress.
+     */
+#if defined(__x86_64__) || defined(__i386__)
     __asm__ volatile ("sqrtsd %1, %0" : "=x"(r) : "x"(x));
+#elif defined(__aarch64__)
+    __asm__ volatile ("fsqrt %d0, %d1" : "=w"(r) : "w"(x));
+#else
+    r = __builtin_sqrt(x);
+#endif
     return r;
 }
 __attribute__((weak)) double trunc(double x) { return (double)(long long)x; }
