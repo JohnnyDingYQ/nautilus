@@ -1,7 +1,7 @@
 /*
- * wasm_nautilus.h - Platform Abstraction Layer for Wasm3 on Nautilus
+ * pal.h - Platform Abstraction Layer for Wasm3 on Nautilus.
  *
- * Force-included into every Wasm3 compilation unit via -include in the Makefile.
+ * Force-included into every compilation unit via -include in the Makefile.
  *
  * DESIGN CONSTRAINT: Do NOT include any Nautilus header that redefines standard
  * C types (libccompat.h redefines FILE, off_t, memset, locale_t, abs, ...).
@@ -20,11 +20,11 @@
  * a valid re-declaration of the kernel function.
  */
 
-#ifndef WASM_NAUTILUS_H
-#define WASM_NAUTILUS_H
+#ifndef WASM_PAL_H
+#define WASM_PAL_H
 
 /* Safe: these live in the compiler's own include directory, never in /usr/include.
- * They define only size_t, NULL, uintN_t, bool — no FILE, off_t, etc. */
+ * They define only size_t, NULL, uintN_t, bool — no FILE, off_t, etc. from libc */
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -39,9 +39,9 @@ extern void *kmem_realloc(void *ptr, size_t size);
 extern void  kmem_free(void *addr);
 extern int   printk(const char *fmt, ...);
 
-/* calloc(n, s) replacement; implemented in wasm_nautilus.c */
+/* calloc(n, s) replacement; implemented in pal.c */
 extern void *naut_calloc_fn(size_t n, size_t size);
-/* abort() replacement; implemented in wasm_nautilus.c */
+/* abort() replacement; implemented in pal.c */
 extern void  naut_abort_fn(void) __attribute__((noreturn));
 
 /* -----------------------------------------------------------------------
@@ -93,4 +93,4 @@ extern double naut_floor_fn(double x);
 #  define NAN        __builtin_nanf("")
 #endif
 
-#endif /* WASM_NAUTILUS_H */
+#endif /* WASM_PAL_H */
