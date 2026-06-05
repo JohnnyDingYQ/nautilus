@@ -332,6 +332,22 @@ m3ApiRawFunction(naut_wasi_fd_seek)
     m3ApiReturn(29);  /* __WASI_ERRNO_SPIPE */
 }
 
+/*
+ * fd_prestat_get(fd, prestat_ptr) -> errno
+ *
+ * WASI programs compiled with the full SDK probe fd 3, 4, … at startup
+ * looking for pre-opened directories.  The kernel has none, so return
+ * EBADF (8) unconditionally to signal that the probe should stop.
+ */
+m3ApiRawFunction(naut_wasi_fd_prestat_get)
+{
+    m3ApiReturnType(uint32_t)
+    m3ApiGetArg    (uint32_t, fd)
+    m3ApiGetArg    (uint32_t, prestat_ptr)
+    (void)fd; (void)prestat_ptr;
+    m3ApiReturn(8);  /* __WASI_ERRNO_BADF — no preopened directories */
+}
+
 /* -----------------------------------------------------------------------
  * Registration
  * ----------------------------------------------------------------------- */
@@ -372,6 +388,8 @@ M3Result link_nautilus_wasi(IM3Module module)
     LINK("wasi_unstable",          "fd_close",          "i(i)",     &naut_wasi_fd_close)
     LINK("wasi_snapshot_preview1", "fd_seek",           "i(iIii)",  &naut_wasi_fd_seek)
     LINK("wasi_unstable",          "fd_seek",           "i(iIii)",  &naut_wasi_fd_seek)
+    LINK("wasi_snapshot_preview1", "fd_prestat_get",    "i(ii)",    &naut_wasi_fd_prestat_get)
+    LINK("wasi_unstable",          "fd_prestat_get",    "i(ii)",    &naut_wasi_fd_prestat_get)
 
     LINK("naut", "scratch_write", "i(ii)", &naut_scratch_write)
     LINK("naut", "scratch_read",  "i(ii)", &naut_scratch_read)
