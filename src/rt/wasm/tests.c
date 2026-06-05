@@ -27,6 +27,7 @@
 #include "tests/fd_close_test.wasm.h"
 #include "tests/fd_seek_test.wasm.h"
 #include "tests/wasi_integration_test.wasm.h"
+#include "tests/game_of_life_test.wasm.h"
 
 extern int printk(const char *fmt, ...);
 extern int snprintf(char *buf, size_t size, const char *fmt, ...);
@@ -71,6 +72,8 @@ static const struct {
     { "fd_seek",    "fd_seek_test",        fd_seek_test_wasm,         sizeof(fd_seek_test_wasm),         0, 0ULL },
     { "wasi_integration", "wasi_integration_test",
       wasi_integration_test_wasm, sizeof(wasi_integration_test_wasm), 0, 0ULL },
+    { "game_of_life",     "game_of_life_test",
+      game_of_life_test_wasm,     sizeof(game_of_life_test_wasm),     0, 0ULL },
     { NULL, NULL, NULL, 0, 0, 0 }
 };
 
