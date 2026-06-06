@@ -39,6 +39,25 @@ void naut_abort_fn(void)
     __builtin_unreachable();
 }
 
+/* Real abort symbol — fallback for any TU where pal.h's macro is wiped. */
+#undef abort
+void __attribute__((noreturn)) abort(void)
+{
+    naut_abort_fn();
+    __builtin_unreachable();
+}
+
+/* Software popcount — used when the target CPU does not expose hardware popcnt.
+ * The integration branch compiles without -mpopcnt so GCC emits calls to this
+ * GCC runtime helper for the wasm3 i32.popcnt / i64.popcnt opcodes. */
+int __popcountdi2(unsigned long long a)
+{
+    a = a - ((a >> 1) & 0x5555555555555555ULL);
+    a = (a & 0x3333333333333333ULL) + ((a >> 2) & 0x3333333333333333ULL);
+    a = (a + (a >> 4)) & 0x0f0f0f0f0f0f0f0fULL;
+    return (int)((a * 0x0101010101010101ULL) >> 56);
+}
+
 /*
  * pal.h macros calloc → naut_calloc_fn.  Files that include stdlib.h get
  * that macro wiped by stdlib.h's own "#undef calloc" before its declaration,

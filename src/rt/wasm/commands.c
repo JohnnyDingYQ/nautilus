@@ -27,9 +27,8 @@ struct shell_cmd_impl {
 };
 
 #define nk_register_shell_cmd(cmd) \
-    static struct shell_cmd_impl * _nk_cmd_##cmd \
-    __attribute__((used)) \
-    __attribute__((unused, __section__(".shell_cmds"), \
+    const static struct shell_cmd_impl * _nk_cmd_##cmd \
+    __attribute__((used, unused, __section__(".shell_cmd."#cmd), \
         aligned(sizeof(void*)))) \
     = &cmd
 

@@ -6,10 +6,10 @@ obj-y += \
 	test/ \
     compat/ \
 	fs/  \
+	rt/  \
 
 obj-$(NAUT_CONFIG_ARCH_X86) += \
 	gc/  \
-	rt/ \
 	net/ \
 	acpi/ \
 
