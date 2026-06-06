@@ -71,10 +71,17 @@ void *calloc(size_t n, size_t size)
 }
 
 /*
- * m3_env.c uses strtoul/strtoull to parse argv strings in m3_CallArgv.
- * The kernel has no libc, so provide minimal implementations.
+ * strtoul / strtoull — two separate symbols per function:
+ *
+ * naut_m3_strtoul / naut_m3_strtoull: the actual implementations, called
+ *   directly by the #ifdef __NAUTILUS__ patch in m3_env.c to bypass
+ *   libccompat.c's GEN_UNDEF stub (strtoul(void)->0).
+ *
+ * strtoul / strtoull: real symbols for any call site where the pal.h macro
+ *   is wiped before the call.  libccompat does not define strtoull; it
+ *   defines strtoul as a zero-returning stub, so both real symbols are needed.
  */
-unsigned long strtoul(const char *s, char **endptr, int base)
+unsigned long naut_m3_strtoul(const char *s, char **endptr, int base)
 {
     unsigned long val = 0;
     if (base == 0 || base == 10) {
@@ -85,7 +92,7 @@ unsigned long strtoul(const char *s, char **endptr, int base)
     return val;
 }
 
-unsigned long long strtoull(const char *s, char **endptr, int base)
+unsigned long long naut_m3_strtoull(const char *s, char **endptr, int base)
 {
     unsigned long long val = 0;
     if (base == 0 || base == 10) {
@@ -94,6 +101,19 @@ unsigned long long strtoull(const char *s, char **endptr, int base)
     }
     if (endptr) *endptr = (char *)s;
     return val;
+}
+
+/* Fallback symbols using standard names. */
+#undef strtoul
+unsigned long strtoul(const char *s, char **endptr, int base)
+{
+    return naut_m3_strtoul(s, endptr, base);
+}
+
+#undef strtoull
+unsigned long long strtoull(const char *s, char **endptr, int base)
+{
+    return naut_m3_strtoull(s, endptr, base);
 }
 
 /* -----------------------------------------------------------------------
