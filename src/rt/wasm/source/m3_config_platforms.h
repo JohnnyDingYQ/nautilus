@@ -213,4 +213,10 @@ typedef int8_t          i8;
 #  endif
 #endif
 
+#if defined(__aarch64__)
+#  ifndef d_m3Use32BitSlots
+#    define d_m3Use32BitSlots                   0
+#  endif
+#endif
+
 #endif // m3_config_platforms_h

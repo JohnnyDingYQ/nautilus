@@ -69,8 +69,14 @@ tmp                     .req x9
 nautilus_entry:
     # Disable Interrupts
     msr DAIFSet, 0b1111
-    # Save the DTB
+    # Save the DTB (ARM64 boot protocol: x0 = physical address of DTB).
+    # QEMU only sets x0 when booting a flat ARM64 Image binary; when loading
+    # an ELF directly via -kernel, x0 is 0.  Fall back to the QEMU virt
+    # default: QEMU places the DTB at the start of RAM (0x40000000).
     mov x20, x0
+    cbnz x20, 1f
+    ldr x20, =0x40000000
+1:
 
     # Exceptions will try to access the CPU struct if TPIDR_EL1 is non-null
     msr TPIDR_EL1, xzr

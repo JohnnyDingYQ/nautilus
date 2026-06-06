@@ -546,6 +546,15 @@ void init_threaded(void) {
 
   nk_handle_init_stage_launch();
 
+#ifdef NAUT_CONFIG_WASM_RT
+  {
+    extern int handle_wasm_test(void);
+    INIT_PRINT("ARM64: running wasm test suite\n");
+    handle_wasm_test();
+    INIT_PRINT("ARM64: wasm test suite complete\n");
+  }
+#endif
+
   INIT_PRINT("Promoting init thread to idle\n");
 
   idle(NULL,NULL);

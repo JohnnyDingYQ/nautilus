@@ -999,8 +999,27 @@ _   (checkStartFunction(i_function->module))
     for (u32 i = 0; i < ftype->numArgs; ++i)
     {
         switch (d_FuncArgType(ftype, i)) {
+#ifdef __NAUTILUS__
+        /* libccompat.c defines strtoul(void)->0 — always returns 0, wrong
+         * signature.  Call private implementations from pal.c directly. */
+        case c_m3Type_i32:
+        {
+            extern unsigned long naut_m3_strtoul(const char *s, char **endptr, int base);
+            *(i32*)(s) = (i32)naut_m3_strtoul(i_argv[i], NULL, 10);
+            s += 8;
+            break;
+        }
+        case c_m3Type_i64:
+        {
+            extern unsigned long long naut_m3_strtoull(const char *s, char **endptr, int base);
+            *(i64*)(s) = (i64)naut_m3_strtoull(i_argv[i], NULL, 10);
+            s += 8;
+            break;
+        }
+#else
         case c_m3Type_i32:  *(i32*)(s) = strtoul(i_argv[i], NULL, 10);  s += 8; break;
         case c_m3Type_i64:  *(i64*)(s) = strtoull(i_argv[i], NULL, 10); s += 8; break;
+#endif
 # if d_m3HasFloat
         case c_m3Type_f32:  *(f32*)(s) = strtod(i_argv[i], NULL);       s += 8; break;  // strtof would be less portable
         case c_m3Type_f64:  *(f64*)(s) = strtod(i_argv[i], NULL);       s += 8; break;
